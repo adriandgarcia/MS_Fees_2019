@@ -1,0 +1,276 @@
+---
+title: "MS Fees 2019"
+knit: (function(input_file, encoding) {
+  out_dir <- 'docs';
+  rmarkdown::render(input_file,
+ encoding=encoding,
+ output_file=file.path(dirname(input_file), out_dir, 'index.html'))})
+author: "Adrian D. Garcia"
+date: "June 2020"
+output: html_document
+---
+
+```{r setup, message=FALSE}
+library(tidyverse) #For Data Analysis
+library(lubridate) #For working with dates
+library(DT) #For visualizing tables
+```
+
+First, I pull in the data from Morningstar Direct (combined using "Combine_Files.r"). There are 25,654 rows and 96 columns.
+Data was pulled from Morningstar Direct on June 12, 2020.
+
+```{r load, message= FALSE, warning= FALSE}
+
+
+Full <- read_csv("DIRECT/MS_Fee_Report_061220.csv",
+                 guess_max = 5000)
+
+```
+
+I'm making the following adjustment to the data:
+
+-Calculate the average assets for 2017, 2018 and 2019.
+-Calculate the percent change in net expense ratios from 2018 to 2019
+-Multipy the annual average asset figures by the expense ratio (to use later for asset-weighted calculations)
+
+```{r adjustment, echo=FALSE}
+Adjusted_Data <- Full %>%
+  mutate(
+    Net_Asst_2017_AVG = rowMeans(Full[,53:64], na.rm=TRUE),
+    Net_Asst_2018_AVG = rowMeans(Full[,65:76], na.rm=TRUE),
+    Net_Asst_2019_AVG = rowMeans(Full[,77:88], na.rm=TRUE),
+    Pts_2018_2019 = `Annual Report \nNet Expense \nRatio \nYear2019` - `Annual Report \nNet Expense \nRatio \nYear2018`,
+    Change_2018_2019 = ((`Annual Report \nNet Expense \nRatio \nYear2019`/100)-(`Annual Report \nNet Expense \nRatio \nYear2018`/100))
+    /(`Annual Report \nNet Expense \nRatio \nYear2018`/100)*100,
+    Asst_By_Fee_2017 = `Annual Report \nNet Expense \nRatio \nYear2017` * Net_Asst_2017_AVG,
+    Asst_By_Fee_2018 = `Annual Report \nNet Expense \nRatio \nYear2018` * Net_Asst_2018_AVG,
+    Asst_By_Fee_2019 = `Annual Report \nNet Expense \nRatio \nYear2019` * Net_Asst_2019_AVG,
+  )
+```
+
+Here I want to look how deep firms slashed pay ratios from 2018 to 2019.
+First, remove rows with an expense ratio of zero in 2018 because I can't calculate changes with that base. I also filter out expense ratios listed as NA (blank) for 2018 and 2019.
+
+Now I need to put the percent change in fees from 2018 to 2019 into buckets. I did that with the cut() function. Here's a for personal reference:
+https://rpubs.com/pierrelafortune/cutdocumentation
+
+```{r cuts_by_shareclass, message = FALSE}
+
+Category <- Adjusted_Data %>% 
+  select(
+    1:20,
+    86:96
+  ) %>%
+  filter(
+    `Annual Report \nNet Expense \nRatio \nYear2018` != 0 &
+      !is.na(`Annual Report \nNet Expense \nRatio \nYear2018`) &
+      !is.na(`Annual Report \nNet Expense \nRatio \nYear2019`)
+  ) %>% 
+  mutate(
+    Pct_FeeChange = 
+      cut(Change_2018_2019,
+          breaks = c(-Inf,-50,-25,-10,-1,-0.01,0,Inf),
+          labels = c("< -50", "-25 - -50", "-10 - -25", "-1 - 10","0 - -1", "0", "> 0"),
+          include.lowest = TRUE,
+          right = TRUE
+      )
+  )
+
+Summary_Category <- Category %>% 
+  group_by(Pct_FeeChange) %>% 
+  summarise(count = n())
+
+ggplot(data = Summary_Category, mapping = aes(x = Pct_FeeChange, y = count)) +
+  geom_bar(stat = "identity") +
+  geom_text(aes(label = count), vjust = 0)
+
+```
+
+Here I am looking at the fund families that with the lowest and highest overall fees across active products. I start by filtering out index funds and removing fees that are NA (blank) for 2019. Next I group the data by firm, sum their adjusted assets, sum their net assets and divide the total adjusted data by the total net asssets to calculate asset-weighted fees for each fund shop. I select the top and bottom 15 fund families based on the results.
+
+```{r active_fee, message=FALSE}
+
+ActiveFunds <- Adjusted_Data %>% 
+  filter(
+    `Index \nFund` != "Yes" &
+            !is.na(`Annual Report \nNet Expense \nRatio \nYear2019`)
+
+  )
+
+Active_Fees <- ActiveFunds %>% 
+  group_by(`Firm Name`) %>% 
+  summarise(
+    Sum_Assts_Wted = sum(Asst_By_Fee_2019, na.rm = TRUE),
+    Sum_Assets = sum(Net_Asst_2019_AVG, na.rm = TRUE),
+    Fee_Wted = Sum_Assts_Wted/Sum_Assets
+  )
+
+Active_HighFees <- Active_Fees %>% 
+  arrange(desc(Fee_Wted)) %>% 
+  top_n(15, Fee_Wted)
+
+Active_LowFees <- Active_Fees %>% 
+  arrange(Fee_Wted) %>% 
+  top_n(-15, Fee_Wted)
+
+ggplot(data = Active_HighFees, mapping = aes(x = reorder(`Firm Name`, Fee_Wted), y = Fee_Wted)) +
+  geom_bar(stat="identity") +
+  coord_flip() + 
+  geom_text(aes(label = round(Fee_Wted,2)), hjust = 0)
+
+ggplot(data = Active_LowFees, mapping = aes(x = reorder(`Firm Name`, -Fee_Wted), y = Fee_Wted)) +
+  geom_bar(stat="identity") +
+  coord_flip() + 
+  geom_text(aes(label = round(Fee_Wted,2)), hjust = 0)
+
+```
+
+Here I am looking at the fund families that with the lowest and highest overall fees across passive products. I start by filtering out non-index funds and removing fees that are NA (blank) for 2019. Next I group the data by firm, sum their adjusted assets, sum their net assets and divide the total adjusted data by the total net asssets to calculate asset-weighted fees for each fund shop. I select the top and bottom 15 fund families based on the results.
+
+```{r passive_fee, message=FALSE}
+
+PassiveFunds <- Adjusted_Data %>% 
+  filter(
+    `Index \nFund` != "No" &
+      !is.na(`Annual Report \nNet Expense \nRatio \nYear2019`)
+  )
+
+Passive_Fees <- PassiveFunds %>% 
+  group_by(`Firm Name`) %>% 
+  summarise(
+    Sum_Assts_Wted = sum(Asst_By_Fee_2019, na.rm = TRUE),
+    Sum_Assets = sum(Net_Asst_2019_AVG, na.rm = TRUE),
+    Fee_Wted = Sum_Assts_Wted/Sum_Assets
+  )
+
+Passive_HighFees <- Passive_Fees %>% 
+  arrange(desc(Fee_Wted)) %>% 
+  top_n(15)
+
+Passive_LowFees <- Passive_Fees %>% 
+  arrange(Fee_Wted) %>% 
+  top_n(-15)
+
+ggplot(data = Passive_HighFees, mapping = aes(x = reorder(`Firm Name`, -Fee_Wted), y = Fee_Wted)) +
+  geom_bar(stat="identity") +
+  coord_flip() + 
+  geom_text(aes(label = round(Fee_Wted,2)), hjust = 0)
+
+ggplot(data = Passive_LowFees, mapping = aes(x = reorder(`Firm Name`, -Fee_Wted), y = Fee_Wted)) +
+  geom_bar(stat="identity") +
+  coord_flip() + 
+  geom_text(aes(label = round(Fee_Wted,2)), hjust = 0)
+
+```
+
+Here I am looking at how many share classes had fees that were cut and hiked as well as saw no change. I start by filtering out fees that are NA (blank) for 2019 and 2018. I also remove fees with a zero expense ratio for 2018 because we can't calculate change with that base. Next I create a category (Pct_FeeChange) that puts the percent changes (continous) in buckets (categorical). After that I just count the buckets.
+
+```{r cuts_by_funds, message = FALSE}
+
+Shareclass <- Adjusted_Data %>% 
+  filter(
+    `Annual Report \nNet Expense \nRatio \nYear2018` != 0 &
+      !is.na(`Annual Report \nNet Expense \nRatio \nYear2018`) &
+      !is.na(`Annual Report \nNet Expense \nRatio \nYear2019`)
+  ) %>% 
+  mutate(
+    Pct_FeeChange = 
+      cut(Change_2018_2019,
+          breaks = c(-Inf,-0.001,0,Inf),
+          labels = c("Cut", "No Change", "Hike"),
+          include.lowest = TRUE,
+          right = TRUE
+      )
+  )
+
+Summary_Shareclass <- Shareclass %>% 
+  group_by(`Firm Name`,
+           Pct_FeeChange) %>% 
+  summarise(count = n())
+
+ggplot(data = Summary_Shareclass, mapping = aes(x = Pct_FeeChange, y = count)) +
+  geom_bar(stat = "identity")
+
+```
+
+Here I am looking at how many Passive share classes had fees that were cut and hiked as well as saw no change. I start by filtering out non-index funds and fees that are NA (blank) for 2019 and 2018. I also remove fees with a zero expense ratio for 2018 because we can't calculate change with that base. Next I create a category (Pct_FeeChange) that puts the percent changes (continous) in buckets (categorical). After that I just count the buckets.
+
+```{r cuts_by_passive_funds, message = FALSE}
+
+Passive_Shareclass <- Adjusted_Data %>% 
+  filter(
+    `Annual Report \nNet Expense \nRatio \nYear2018` != 0 &
+      !is.na(`Annual Report \nNet Expense \nRatio \nYear2018`) &
+      !is.na(`Annual Report \nNet Expense \nRatio \nYear2019`) &
+      `Index \nFund` == "Yes"
+  ) %>% 
+  mutate(
+    Pct_FeeChange = 
+      cut(Change_2018_2019,
+          breaks = c(-Inf,-0.001,0,Inf),
+          labels = c("Cut", "No Change", "Hike"),
+          include.lowest = TRUE,
+          right = TRUE
+      )
+  )
+
+Passive_Summary_Shareclass <- Passive_Shareclass %>% 
+  group_by(`Firm Name`,
+           Pct_FeeChange) %>% 
+  summarise(count = n()) %>% 
+  group_by(`Firm Name`) %>% 
+  mutate(
+    pct = count/sum(count)*100)
+
+Passive_Summary_Shareclass %>% 
+  filter(Pct_FeeChange == "Cut") %>% 
+  arrange(desc(count)) %>% 
+  ungroup() %>% 
+  top_n(15, count) %>% 
+ggplot(mapping = aes(x = reorder(`Firm Name`, count), y = count)) +
+  geom_bar(stat = "identity") +
+  coord_flip() +
+  geom_text(aes(label = count), vjust = 0)
+
+```
+
+tk
+
+```{r cuts_by_active_funds, message = FALSE}
+
+Active_Shareclass <- Adjusted_Data %>% 
+  filter(
+    `Annual Report \nNet Expense \nRatio \nYear2018` != 0 &
+      !is.na(`Annual Report \nNet Expense \nRatio \nYear2018`) &
+      !is.na(`Annual Report \nNet Expense \nRatio \nYear2019`) &
+      `Index \nFund` == "Yes"
+  ) %>% 
+  mutate(
+    Pct_FeeChange = 
+      cut(Change_2018_2019,
+          breaks = c(-Inf,-0.001,0,Inf),
+          labels = c("Cut", "No Change", "Hike"),
+          include.lowest = TRUE,
+          right = TRUE
+      )
+  )
+
+Active_Summary_Shareclass <- Active_Shareclass %>% 
+  group_by(`Firm Name`,
+           Pct_FeeChange) %>% 
+  summarise(count = n()) %>% 
+  group_by(`Firm Name`) %>% 
+  mutate(
+    pct = count/sum(count)*100)
+
+Active_Summary_Shareclass %>% 
+  filter(Pct_FeeChange == "Cut") %>% 
+  arrange(desc(count)) %>% 
+  ungroup() %>% 
+  top_n(15, count) %>% 
+ggplot(mapping = aes(x = reorder(`Firm Name`, count), y = count)) +
+  geom_bar(stat = "identity") +
+  coord_flip() +
+  geom_text(aes(label = count), vjust = 0)
+
+```
