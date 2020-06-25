@@ -193,7 +193,7 @@ ggplot(data = Summary_Shareclass, mapping = aes(x = Pct_FeeChange, y = count)) +
 
 ```
 
-Here I am looking at how many Passive share classes had fees that were cut and hiked as well as saw no change. I start by filtering out non-index funds and fees that are NA (blank) for 2019 and 2018. I also remove fees with a zero expense ratio for 2018 because we can't calculate change with that base. Next I create a category (Pct_FeeChange) that puts the percent changes (continous) in buckets (categorical). After that I just count the buckets.
+ Here I am looking at how many Passive share classes had fees that were cut and hiked as well as saw no change. I start by filtering out non-index funds and fees that are NA (blank) for 2019 and 2018. I also remove fees with a zero expense ratio for 2018 because we can't calculate change with that base. Next I create a category (Pct_FeeChange) that puts the percent changes (continous) in buckets (categorical). After that I just count the buckets.
 
 ```{r cuts_by_passive_funds, message = FALSE}
 
